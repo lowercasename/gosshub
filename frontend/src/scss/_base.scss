@@ -1,0 +1,43 @@
+@use 'variables';
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    font: 16px;
+    color: #1b1b1b;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+#app {
+    margin: 0 auto;
+    max-width: 960px;
+    width: 100%;
+    padding: 1rem;
+}
+
+#app__header {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid variables.grey(75);
+    display: flex;
+    justify-items: space-between;
+    align-items: center;
+
+    h1 {
+        margin: 0;
+        a {
+            text-decoration: none;
+            color: variables.$blue;
+        }
+    }
+
+    nav {
+        margin-left: auto;
+        a {
+            padding: 0 .5rem;
+            color: variables.$blue;
+            text-decoration: none;
+        }
+    }
+}
