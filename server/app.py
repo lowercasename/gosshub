@@ -1,6 +1,7 @@
 from functools import wraps
 from secrets import token_urlsafe
 from flask import Flask, g, request, jsonify, escape
+from flask_cors import CORS
 import jwt
 from peewee import *
 from playhouse.shortcuts import model_to_dict
@@ -13,6 +14,7 @@ import shortuuid
 
 # Create Flask instance
 app = Flask(__name__)
+CORS(app)
 app.config.from_object(__name__)
 
 # Import config
@@ -232,23 +234,23 @@ def create_user():
                 verification_token=jwt.encode({ 'username': request.json['username'], 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1) }, app.config['SECRET_KEY'], algorithm="HS256"))
             print(user.verification_token)
             # Send email with verification token
-            # send_email(
-            #         to=user.email,
-            #         subject='Verify your email on GossHub',
-            #         body="Hi!\n\n" +
-            #         "To start using GossHub, you must verify your email address. Follow this link:\n" +
-            #         "https://gosshub.com/verify-email/" + user.verification_token + "\n\n" +
-            #         "This link will expire in 1 hour. If it doesn't work, please request a new verification link here:\n\n" +
-            #         "https://gosshub.com/reset-token\n\n" +
-            #         "See you soon,\n\n" +
-            #         "GossHub")
+            send_email(
+                    to=user.email,
+                    subject='Verify your email on GossHub',
+                    body="Hi!\n\n" +
+                    "To start using GossHub, you must verify your email address. Follow this link:\n" +
+                    "https://gosshub.com/verify-email?token=" + user.verification_token + "\n\n" +
+                    "This link will expire in 1 hour. If it doesn't work, please request a new verification link here:\n\n" +
+                    "https://gosshub.com/reset-token\n\n" +
+                    "See you soon,\n\n" +
+                    "GossHub")
             log(f"User {user.username} created.", initiator=user)
             return success('User created.')
     except IntegrityError as e:
         print(e)
         raise APIErrorConflict('This username is taken.') 
 
-@app.route('/user')
+@app.route('/user', methods=['GET'])
 @token_required
 def get_user(auth):
     if request.args and 'username' in request.args:
@@ -325,14 +327,68 @@ def reset_token():
         subject='Verify your email on GossHub',
         body="Hi!\n\n" +
         "To start using GossHub, you must verify your email address. Follow this link:\n" +
-        "https://gosshub.com/verify-email/" + user.verification_token + "\n\n" +
+        "https://gosshub.com/verify-email?token=" + user.verification_token + "\n\n" +
         "This link will expire in 1 hour. If it doesn't work, please request a new verification link here:\n\n" +
         "https://gosshub.com/reset-token\n\n" +
         "See you soon,\n\n" +
         "GossHub")
     return success('Token reset.')
 
-@app.route('/document', methods=['GET', 'POST', 'PUT', 'DELETE'])
+@app.route('/document', methods=['GET'])
+def get_document():
+    # We want a single document, and all its edit history
+    if request.args:
+        validate(request.args, 'uuid')
+        Creator = User.alias()
+        query = (Document
+                .select(Document.uuid, Transformation.date, Transformation.body, User.username, Creator.username.alias('creator'))
+                .where(Document.uuid == request.args['uuid'])
+                .join(Transformation)
+                .join(User)
+                .join_from(Document, Creator)
+                .order_by(Transformation.date.desc()))
+        if not len(query):
+            raise APIErrorNotFound('No matching document found.')
+        return jsonify({
+            "created_by": query[0].creator.username,
+            "uuid": query[0].uuid,
+            "transformations": [{ 'username': document['username'], 'date': document['date'], 'body': document['body'] } for document in query.dicts()]
+        })
+    # We want all the documents, but just the most recent transformation for each
+    Creator = User.alias()
+    Author = User.alias()
+    Latest = Transformation.alias()
+    cte = (Latest
+            .select(Latest.document_id, fn.MAX(Latest.date).alias('max_date'))
+            .group_by(Latest.document_id)
+            .cte('latest'))
+    predicate = ((Document.id == cte.c.document_id) &
+                (Transformation.date == cte.c.max_date))
+    query = (Document
+            .select(Document.uuid, Transformation.date, Transformation.body, Author.username, Creator.username.alias('created_by'))
+            .join(cte, on=predicate)
+            .join_from(Document, Transformation)
+            .join_from(Document, Creator)
+            .join_from(Transformation, Author)
+            .order_by(Transformation.date.desc())
+            .with_cte(cte))
+    response = []
+    for document in query.dicts():
+        response_document = {
+            'uuid': document['uuid'],
+            'created_by': document['created_by'],
+            'transformations': [
+                {
+                    'username': document['username'],
+                    'body': document['body'],
+                    'date': document['date'],
+                }
+            ]
+        }
+        response.append(response_document)
+    return jsonify(response)
+
+@app.route('/document', methods=['POST', 'PUT', 'DELETE'])
 @token_required
 def document(auth):
     if request.method == 'POST':
@@ -356,38 +412,6 @@ def document(auth):
             print(tags)
         log(f"{auth.username} created a document.", initiator=auth, affected_document=document, visibility='public')
         return success('Document created.')
-    elif request.method == 'GET':
-        # We want a single document, and all its edit history
-        if request.args:
-            validate(request.args, 'uuid')
-            query = (Document
-                    .select(Document.uuid, Transformation.date, Transformation.body, User.username)
-                    .where(Document.uuid == request.args['uuid'])
-                    .join(Transformation)
-                    .join(User)
-                    .order_by(Transformation.date.desc()))
-            if not len(query.dicts()):
-                raise APIErrorNotFound('No matching document found.')
-            return jsonify({ "uuid": query[0].uuid, "transformations": [document for document in query.dicts()] })
-        # We want all the documents, but just the most recent edit for each
-        Creator = User.alias()
-        Author = User.alias()
-        Latest = Transformation.alias()
-        cte = (Latest
-                .select(Latest.document_id, fn.MAX(Latest.date).alias('max_date'))
-                .group_by(Latest.document_id)
-                .cte('latest'))
-        predicate = ((Document.id == cte.c.document_id) &
-                    (Transformation.date == cte.c.max_date))
-        query = (Document
-                .select(Document.uuid, Transformation.date.alias('edited_date'), Transformation.body, Author.username.alias('last_edited_by'), Creator.username.alias('created_by'))
-                .join(cte, on=predicate)
-                .join_from(Document, Transformation)
-                .join_from(Document, Creator)
-                .join_from(Transformation, Author)
-                .order_by(Transformation.date.desc())
-                .with_cte(cte))
-        return jsonify([document for document in query.dicts()])
     elif request.method == 'PUT':
         validate(request.args, 'uuid')
         validate(request.json, 'body')
