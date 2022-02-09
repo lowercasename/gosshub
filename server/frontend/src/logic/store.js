@@ -2,6 +2,7 @@ import { createStore } from 'redux';
 
 const initialState = {
     loggedIn: false,
+    user: {},
     jwt: localStorage.getItem('jwt') || false,
 }
 
@@ -15,6 +16,8 @@ const rootReducer = (state = initialState, action) => {
         case 'auth/logout':
             localStorage.removeItem('jwt');
             return { ...state, loggedIn: false }
+        case 'user/set':
+            return { ...state, user: action.payload }
         default:
             return state;
     }

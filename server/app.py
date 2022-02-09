@@ -1,6 +1,6 @@
 from functools import wraps
 from secrets import token_urlsafe
-from flask import Flask, g, request, jsonify, escape
+from flask import Flask, g, request, jsonify, escape, send_from_directory
 from flask_cors import CORS
 import jwt
 from peewee import *
@@ -15,10 +15,12 @@ import shortuuid
 # Create Flask instance
 app = Flask(__name__)
 CORS(app)
-app.config.from_object(__name__)
+# app.config.from_object(__name__)
 
 # Import config
 app.config.from_file("config.toml", load=toml.load)
+app.static_url_path=app.config.get('STATIC_FOLDER')
+app.static_folder=app.root_path + app.static_url_path
 
 # Create PeeWee database instance
 database = SqliteDatabase(app.config['DATABASE'])
@@ -38,7 +40,6 @@ class User(BaseModel):
 
 class Document(BaseModel):
     created_date = DateTimeField()
-    creator = ForeignKeyField(User, backref='documents')
     archived = BooleanField(default=False)
     uuid = CharField(unique=True)
 
@@ -46,12 +47,12 @@ class Tag(BaseModel):
     created_date = DateTimeField()
     creator = ForeignKeyField(User, backref='tags')
     name = CharField(unique=True)
-    description = TextField()
+    description = TextField(null=True)
 
 class Transformation(BaseModel):
     date = DateTimeField()
     document = ForeignKeyField(Document, backref='transformations')
-    user = ForeignKeyField(User, backref='transformations')
+    user = ForeignKeyField(User, backref='transformations', null=True)
     body = TextField()
 
 class Watch(BaseModel):
@@ -70,10 +71,15 @@ class Log(BaseModel):
     affected_document = ForeignKeyField(Document, backref='logs', null=True)
     visibility=CharField()
 
+class Page(BaseModel):
+    slug = CharField(unique=True)
+    title = TextField()
+    body = TextField()
+
 # simple utility function to create tables
 def create_tables():
     with database:
-        database.create_tables([User, Document, Tag, Transformation, Watch, TransformationToTagMap, Log])
+        database.create_tables([User, Document, Tag, Transformation, Watch, TransformationToTagMap, Log, Page])
 
 # Success handler
 def success(message="Success", status=200):
@@ -154,6 +160,11 @@ def validate(dictionary, field, minlength=False, maxlength=False, match=False, r
         raise APIErrorBadRequest(f'{pretty_field(field)} has an invalid format.')
     return True
 
+def sanitize(dictionary):
+    if not dictionary:
+        return
+    return { k: v.strip() if type(v) is str else v for k, v in dictionary.items()}
+
 # Email
 def send_email(to, subject, body):
     return requests.post(
@@ -198,9 +209,19 @@ def after_request(response):
     return response
 
 # Views
-@app.route('/')
-def homepage():
-    return 'Hello, world!'
+# @app.route('/')
+# def homepage():
+#     return 'Hello, world!'
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def spa(path):
+    return app.send_static_file("dist/index.html")
+
+@app.route('/cdn/<path:path>')
+def send_file(path):
+    print(app.static_folder)
+    return send_from_directory(app.static_folder + '/dist', path)
 
 @app.route('/log')
 @token_required
@@ -216,23 +237,23 @@ def get_logs(auth):
 
 @app.route('/user', methods=['POST'])
 def create_user():
-    validate(request.json, 'username', minlength=3, maxlength=40)
-    validate(request.json, 'password', match='repeat_password')
-    validate(request.json, 'repeat_password')
-    validate(request.json, 'email', regex="[^@]+@[^@]+\.[^@]+")
+    data = sanitize(request.json) 
+    validate(data, 'username', minlength=3, maxlength=40)
+    validate(data, 'password', minlength=6, match='repeat_password')
+    validate(data, 'repeat_password')
+    validate(data, 'email', regex="[^@]+@[^@]+\.[^@]+")
     # Generate salt and hash the password
-    hash = pbkdf2_sha256.hash(request.json['password'])
+    hash = pbkdf2_sha256.hash(data['password'])
     try:
         with database.atomic():
             user = User.create(
-                username=request.json['username'],
+                username=data['username'],
                 password=hash,
-                email=request.json['email'],
+                email=data['email'],
                 join_date=datetime.datetime.now(),
                 is_admin=False,
                 is_verified=False,
-                verification_token=jwt.encode({ 'username': request.json['username'], 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1) }, app.config['SECRET_KEY'], algorithm="HS256"))
-            print(user.verification_token)
+                verification_token=jwt.encode({ 'username': data['username'], 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1) }, app.config['SECRET_KEY'], algorithm="HS256"))
             # Send email with verification token
             send_email(
                     to=user.email,
@@ -244,10 +265,9 @@ def create_user():
                     "https://gosshub.com/reset-token\n\n" +
                     "See you soon,\n\n" +
                     "GossHub")
-            log(f"User {user.username} created.", initiator=user)
+            log(f"User {user.username} created.", initiator=user, visibility='public')
             return success('User created.')
-    except IntegrityError as e:
-        print(e)
+    except IntegrityError:
         raise APIErrorConflict('This username is taken.') 
 
 @app.route('/user', methods=['GET'])
@@ -255,9 +275,17 @@ def create_user():
 def get_user(auth):
     if request.args and 'username' in request.args:
         validate(request.args, 'username')
-        query = User.select(User.username, User.join_date).where(User.username.contains(request.args['username']))
+        # If we're fetching our own account (or if we're an admin):
+        if auth.username == request.args['username'] or auth.is_admin:
+            query = User.select(User.id, User.username, User.join_date, User.email, User.is_admin, User.is_verified).where(User.username.contains(request.args['username']))
+        else: 
+            query = User.select(User.username, User.join_date).where(User.username.contains(request.args['username']))
     else:
-        query = User.select(User.username, User.join_date)
+        # If we're an admin:
+        if auth.is_admin:
+            query = User.select(User.id, User.username, User.join_date, User.email, User.is_admin, User.is_verified)
+        else: 
+            query = User.select(User.username, User.join_date)
     if not len(query):
         raise APIErrorNotFound('No matching user found.')
     return jsonify([user for user in query.dicts()])
@@ -265,28 +293,80 @@ def get_user(auth):
 @app.route('/user', methods=['PUT', 'DELETE'])
 @token_required
 def modify_user(auth):
+    data = sanitize(request.json)
     if request.method == 'PUT':
-        if request.json:
-            for field, new_value in request.json.items():
-                setattr(auth, field, new_value)
-            auth.save()
-            log(f"User {auth.username} edited.", initiator=auth)
+        if data:
+            # Admin users can specify a target user, otherwise the target is the current user
+            if 'id' in data and auth.is_admin:
+                try:
+                    target_user = User.get_by_id(data['id'])
+                except DoesNotExist:
+                    raise APIErrorNotFound('No user found with this ID.')
+            else:
+                target_user = auth
+            if 'username' in data:
+                # Validate the username first - we do this before we start setting values
+                # to prevent ending up in a situation where we change an email and a username
+                # together but end up keying the email verification token to the old username.
+                validate(data, 'username', minlength=3, maxlength=40)
+                existing_user = User.select().where(User.username == data['username'])
+                if len(existing_user):
+                    raise APIErrorBadRequest('This username is taken.')
+                log(f"User {target_user.username} changed their username to {data['username']}.", initiator=auth, visibility='public')
+            for field, new_value in data.items():
+                if field == 'email':
+                    validate(data, 'email', regex="[^@]+@[^@]+\.[^@]+")
+                    # Set and send verification token first
+                    token_username = data['username'] if 'username' in data else target_user.username
+                    target_user.is_verified = False
+                    target_user.verification_token = jwt.encode({ 'username': token_username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1) }, app.config['SECRET_KEY'], algorithm="HS256")
+                    send_email(
+                        to=new_value,
+                        subject='Verify your email on GossHub',
+                        body="Hi!\n\n" +
+                        "To start using GossHub, you must verify your email address. Follow this link:\n" +
+                        "https://gosshub.com/verify-email?token=" + target_user.verification_token + "\n\n" +
+                        "This link will expire in 1 hour. If it doesn't work, please request a new verification link here:\n\n" +
+                        "https://gosshub.com/reset-token\n\n" +
+                        "See you soon,\n\n" +
+                        "GossHub")
+                elif field == 'password':
+                    validate(data, 'password', minlength=6)
+                    new_value = pbkdf2_sha256.hash(data['password'])
+                setattr(target_user, field, new_value)
+            target_user.save()
             return success('User edited.')
+        else:
+            raise APIErrorBadRequest('No fields specified.')
     elif request.method == 'DELETE':
-        auth.delete_instance()
-        log(f"User {auth.username} deleted.", initiator=auth)
+        # Admin users can specify a target user, otherwise the target is the current user
+        if 'id' in request.args and auth.is_admin:
+            try:
+                target_user = User.get_by_id(request.args['id'])
+            except DoesNotExist:
+                raise APIErrorNotFound('No user found with this ID.')
+        else:
+            target_user = auth
+        # Free up this user's transformations and logs
+        for transformation in target_user.transformations:
+            transformation.user = None
+            transformation.save()
+        # TODO: Free up logs here, too
+        target_user.delete_instance()
+        log(f"User {target_user.username} deleted.", initiator=auth, visibility='public')
         return success('User deleted.')
 
 @app.route('/login', methods=['POST'])
 def login():
-    validate(request.json, 'username')
-    validate(request.json, 'password')
+    data = sanitize(request.json)
+    validate(data, 'username')
+    validate(data, 'password')
     try:
-        user = User.get(User.username == request.json['username'])
+        user = User.get(User.username == data['username'])
     except DoesNotExist: 
         raise APIErrorNotFound('No user found with this username.')
     user = model_to_dict(user)
-    hash_matches = pbkdf2_sha256.verify(request.json['password'], user['password'])
+    hash_matches = pbkdf2_sha256.verify(data['password'], user['password'])
     if not hash_matches:
         raise APIErrorUnauthorized('Username or password incorrect.')
     if not user['is_verified']:
@@ -297,9 +377,10 @@ def login():
 
 @app.route('/verify-email', methods=['POST'])
 def verify_email():
-    validate(request.json, 'verification_token')
+    data = sanitize(request.json)
+    validate(data, 'verification_token')
     try:
-        user = User.get((User.verification_token == request.json['verification_token']) & (User.is_verified == False))
+        user = User.get((User.verification_token == data['verification_token']) & (User.is_verified == False))
     except DoesNotExist: 
         raise APIErrorNotFound('No user found with this verification token.')
     try:
@@ -314,9 +395,10 @@ def verify_email():
 
 @app.route('/reset-token', methods=['POST'])
 def reset_token():
-    validate(request.json, 'email')
+    data = sanitize(request.json)
+    validate(data, 'email')
     try:
-        user = User.get((User.email == request.json['email']) & (User.is_verified == False))
+        user = User.get((User.email == data['email']) & (User.is_verified == False))
     except DoesNotExist: 
         raise APIErrorNotFound('No matching user found.')
     user.verification_token=jwt.encode({ 'username': user.username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1) }, app.config['SECRET_KEY'], algorithm="HS256")
@@ -339,23 +421,34 @@ def get_document():
     # We want a single document, and all its edit history
     if request.args:
         validate(request.args, 'uuid')
-        Creator = User.alias()
         query = (Document
-                .select(Document.uuid, Transformation.date, Transformation.body, User.username, Creator.username.alias('creator'))
+                .select(Document.uuid, Transformation.id, Transformation.date, Transformation.body, User.username)
                 .where(Document.uuid == request.args['uuid'])
                 .join(Transformation)
-                .join(User)
-                .join_from(Document, Creator)
+                .join(User, JOIN.LEFT_OUTER)
                 .order_by(Transformation.date.desc()))
+
+        print(query)
         if not len(query):
             raise APIErrorNotFound('No matching document found.')
+        transformations = []
+        for transformation in query.dicts():
+            tags = []
+            tag_mappings = TransformationToTagMap.select().where(TransformationToTagMap.transformation_id == transformation['id'])
+            if len(tag_mappings):
+                for mapping in tag_mappings:
+                    tags.append(Tag.get_by_id(mapping.tag_id).name)
+            transformations.append({
+                'username': transformation['username'],
+                'date': transformation['date'],
+                'body': transformation['body'],
+                'tags': tags
+            })
         return jsonify({
-            "created_by": query[0].creator.username,
             "uuid": query[0].uuid,
-            "transformations": [{ 'username': document['username'], 'date': document['date'], 'body': document['body'] } for document in query.dicts()]
+            "transformations": transformations
         })
     # We want all the documents, but just the most recent transformation for each
-    Creator = User.alias()
     Author = User.alias()
     Latest = Transformation.alias()
     cte = (Latest
@@ -365,23 +458,27 @@ def get_document():
     predicate = ((Document.id == cte.c.document_id) &
                 (Transformation.date == cte.c.max_date))
     query = (Document
-            .select(Document.uuid, Transformation.date, Transformation.body, Author.username, Creator.username.alias('created_by'))
+            .select(Document.uuid, Transformation.id.alias('transformation_id'), Transformation.date, Transformation.body, Author.username)
             .join(cte, on=predicate)
             .join_from(Document, Transformation)
-            .join_from(Document, Creator)
-            .join_from(Transformation, Author)
+            .join_from(Transformation, Author, JOIN.LEFT_OUTER)
             .order_by(Transformation.date.desc())
             .with_cte(cte))
     response = []
     for document in query.dicts():
+        tags = []
+        tag_mappings = TransformationToTagMap.select().where(TransformationToTagMap.transformation_id == document['transformation_id'])
+        if len(tag_mappings):
+            for mapping in tag_mappings:
+                tags.append(Tag.get_by_id(mapping.tag_id).name)
         response_document = {
             'uuid': document['uuid'],
-            'created_by': document['created_by'],
             'transformations': [
                 {
                     'username': document['username'],
                     'body': document['body'],
                     'date': document['date'],
+                    'tags': tags
                 }
             ]
         }
@@ -392,7 +489,8 @@ def get_document():
 @token_required
 def document(auth):
     if request.method == 'POST':
-        validate(request.json, 'body')
+        data = sanitize(request.json)
+        validate(data, 'body')
         date = datetime.datetime.now()
         # Check there isn't already a document with this UUID
         uuid = shortuuid.uuid()
@@ -400,21 +498,31 @@ def document(auth):
             uuid = shortuuid.uuid()
         document = Document.create(
             created_date=date,
-            creator = auth,
             uuid = uuid)
         transformation = Transformation.create(
             date=date,
             document=document,
             user=auth,
-            body=request.json['body'])
-        if 'tags' in request.json:
-            tags = [slugify(tag) for tag in request.json['tags'] if len(tag) > 2 and len(tag) < 60]
-            print(tags)
+            body=data['body'])
+        if 'tags' in data:
+            existing_tags = [tag.name for tag in Tag.select()]
+            tags_to_attach = [slugify(tag) for tag in data['tags'] if len(tag) > 1 and len(tag) < 60]
+            new_tags = [tag for tag in tags_to_attach if tag not in existing_tags]
+            for tag in new_tags:
+                new_tag = Tag.create(
+                        created_date=datetime.datetime.now(),
+                        creator=auth,
+                        name=tag)
+                log(f"{auth.username} created a tag ({new_tag.name}).", initiator=auth, visibility='public')
+            for tag in tags_to_attach:
+                tag_field = Tag.get(Tag.name == tag)
+                map = TransformationToTagMap.create(transformation=transformation, tag=tag_field)
         log(f"{auth.username} created a document.", initiator=auth, affected_document=document, visibility='public')
         return success('Document created.')
     elif request.method == 'PUT':
+        data = sanitize(request.json)
         validate(request.args, 'uuid')
-        validate(request.json, 'body')
+        validate(data, 'body')
         try:
             document = Document.get(Document.uuid == request.args['uuid'])
         except DoesNotExist:
@@ -423,9 +531,87 @@ def document(auth):
             date=datetime.datetime.now(),
             document=document,
             user=auth,
-            body=request.json['body'])
+            body=data['body'])
+        if 'tags' in data:
+            existing_tags = [tag.name for tag in Tag.select()]
+            tags_to_attach = [slugify(tag) for tag in data['tags'] if len(tag) > 1 and len(tag) < 60]
+            new_tags = [tag for tag in tags_to_attach if tag not in existing_tags]
+            for tag in new_tags:
+                new_tag = Tag.create(
+                        created_date=datetime.datetime.now(),
+                        creator=auth,
+                        name=tag)
+                log(f"{auth.username} created a tag ({new_tag.name}).", initiator=auth, visibility='public')
+            for tag in tags_to_attach:
+                tag_field = Tag.get(Tag.name == tag)
+                map = TransformationToTagMap.create(transformation=transformation, tag=tag_field)
         log(f"{auth.username} edited a document.", initiator=auth, affected_document=document, visibility='public')
         return success('Document edited.')
+    elif request.method == 'DELETE':
+        return success('Endpoint not enabled.')
+
+@app.route('/page', methods=['POST', 'PUT', 'DELETE'])
+@token_required
+def modify_page(auth):
+    if request.method == 'POST':
+        # Only allowed for admins
+        if not auth.is_admin:
+            raise APIErrorUnauthorized('Not authorized to perform this action.')
+        data = sanitize(request.json)
+        validate(data, 'slug')
+        validate(data, 'title')
+        validate(data, 'body')
+        page = Page.create(
+            slug=slugify(data['slug']),
+            title=data['title'],
+            body=data['body'])
+        return success('Page created.')
+    elif request.method == 'PUT':
+        # Only allowed for admins
+        if not auth.is_admin:
+            raise APIErrorUnauthorized('Not authorized to perform this action.')
+        data = sanitize(request.json)
+        validate(request.args, 'slug')
+        validate(data, 'body')
+        validate(data, 'title')
+        try:
+            page = Page.get(Page.slug == request.args['slug'])
+        except DoesNotExist:
+            raise APIErrorNotFound('No matching page found.')
+        page.body = data['body']
+        page.title = data['title']
+        page.save()
+        return success('Page edited.')
+    elif request.method == 'DELETE':
+        # Only allowed for admins
+        if not auth.is_admin:
+            raise APIErrorUnauthorized('Not authorized to perform this action.')
+        validate(request.args, 'slug')
+        try:
+            page = Page.get(Page.slug == request.args['slug'])
+        except DoesNotExist:
+            raise APIErrorNotFound('No matching page found.')
+        page.delete_instance()
+        return success('Page deleted.')
+
+@app.route('/page', methods=['GET'])
+def page():
+    if request.args:
+        validate(request.args, 'slug')
+        try:
+            page = Page.get(Page.slug == request.args['slug'])
+        except DoesNotExist:
+            raise APIErrorNotFound('No matching page found.')
+        return jsonify({
+            'body': page.body,
+            'title': page.title,
+            'slug': page.slug,
+        }) 
+    else:
+        query = Page.select()
+        if not len(query):
+            return jsonify([])
+        return jsonify([{ 'body': page.body, 'title': page.title, 'slug': page.slug } for page in query])
 
 # Allow running from the command line
 if __name__ == '__main__':

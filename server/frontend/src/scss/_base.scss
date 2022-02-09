@@ -1,0 +1,141 @@
+@use 'variables';
+@use 'media';
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    font-size: 16px;
+    color: #1b1b1b;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+a, a:active, a:visited {
+    color: variables.$blue;
+    transition: .15s;
+    text-decoration: none;
+}
+a:hover {
+    color: lighten(variables.$blue, 10%);
+}
+
+#app {
+    margin: 0 auto;
+    max-width: 960px;
+    width: 100%;
+    padding: 1rem;
+}
+
+#app__header {
+    padding: 0.5rem 0;
+    display: flex;
+    border-bottom: 2px solid variables.$blue;
+    justify-content: space-between;
+    align-items: center;
+    
+    h1 {
+        margin: 0;
+        a {
+            text-decoration: none;
+            color: variables.$blue;
+        }
+    }
+
+    nav {
+        margin-left: auto;
+        a {
+            padding: 0 .5rem;
+            color: variables.$blue;
+            text-decoration: none;
+        }
+    }
+    @include media.lt-sm {
+        flex-direction: column;
+        align-items: flex-start;
+        nav {
+            margin-top: 1rem;
+            margin-left: 0;
+        }
+
+    }
+
+}
+
+.document-fake-editor {
+    width: 100%;
+    padding: 1rem;
+    border: 1px solid variables.grey(75);
+    cursor: pointer;
+    color: variables.grey(60);
+    transition: .15s;
+    &:hover {
+        background: variables.grey(98);
+    }
+}
+
+.message {
+    margin: 2rem 0;
+    background: variables.grey(90);
+    padding: 1rem;
+    border-radius: .5rem;
+}
+
+.padded-rows {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    flex-direction: column;
+}
+
+.account__field {
+    height: 40px;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+    white-space: nowrap;
+    &__label {
+        font-weight: 700;
+    }
+    input {
+        margin: 0;
+    }
+    &__controls {
+        margin-left: auto;
+        display: flex;
+        gap: .5rem;
+        button {
+            min-width: min-content;
+            padding: .5rem 1rem;
+        }
+    }
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    th, td {
+        padding: 5px;
+        text-align: left;
+    }
+}
+
+.modal {
+    max-height: 80vh;
+    width: 80vw;
+    overflow-y: auto;
+    background: white;
+    border-radius: 6px;
+    &__backdrop {
+        background: rgba(0, 0, 0, 0.9);
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+}

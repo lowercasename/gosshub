@@ -6,7 +6,7 @@ const User = ({ username }) => {
     
     useEffect(() => {
         apiCall(`/user?username=${username}`, true)
-            .then(data => { console.log(data); setUser(data[0]) })
+            .then(data => setUser(data[0]))
             .catch(error => console.log(error))
     }, [])
 
