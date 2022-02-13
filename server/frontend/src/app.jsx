@@ -72,7 +72,7 @@ const App = () => {
                 <UnauthedRoute path="/register"><Register /></UnauthedRoute>
                 <ProtectedRoute path="/new"><NewDocument /></ProtectedRoute>
                 <Route path="/document/:uuid">{(params) => <SingleDocument uuid={params.uuid} />}</Route>
-                <ProtectedRoute path="/user/:username">{(params) => <User username={params.username} />}</ProtectedRoute>
+                <Route path="/document/:uuid/hash/:hash">{(params) => <SingleDocument uuid={params.uuid} hash={params.hash} />}</Route>
                 <ProtectedRoute path="/document/:uuid/edit">{(params) => <SingleDocument uuid={params.uuid} edit={true} />}</ProtectedRoute>
                 <ProtectedRoute path="/account"><Account /></ProtectedRoute>
                 <UnauthedRoute path="/verify-email"><VerifyEmail /></UnauthedRoute>
