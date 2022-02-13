@@ -3,7 +3,7 @@
 .document {
     border: 1px solid variables.grey(75);
     box-shadow: 3px 3px 0 variables.grey(95);
-    margin: 2rem 0;
+    margin: 0 0 2rem 0;
     main {
         padding: 0.75rem 0.5rem;
         h1, h2, h3, h4, h5, p {
@@ -51,12 +51,6 @@
         flex-wrap: wrap;
         gap: .25rem;
         margin-top: .5rem;
-        &__tag {
-            font-size: 0.8rem;
-            background: variables.$blue;
-            color: variables.grey(90);
-            padding: .25rem .5rem;
-        }
     }
 
     &__meta {
@@ -102,3 +96,14 @@
     }
 }
 
+
+
+a.gh-tag {
+    font-size: 0.8rem;
+    background: variables.$blue;
+    color: variables.grey(90);
+    padding: .25rem .5rem;
+    &:hover {
+        background: lighten(variables.$blue, 10%);
+    }
+}

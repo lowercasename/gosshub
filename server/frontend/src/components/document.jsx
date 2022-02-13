@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import { Tooltip } from 'react-tippy';
 import { apiCall } from '../util';
 import TagField from './TagField';
+import TagButton from './TagButton'
 
 const Document = ({ document, hash, full, edit }) => {
     const [location, setLocation] = useLocation();
@@ -65,7 +66,7 @@ const Document = ({ document, hash, full, edit }) => {
             <main>
                 <ReactMarkdown>{ document.transformations[transformation].body }</ReactMarkdown>
                 <div className="document__tags">
-                    {document.transformations[transformation].tags.map(tag => <div key={tag} className='document__tags__tag'>{tag}</div>)}
+                    {document.transformations[transformation].tags.map(tag => <TagButton key={tag} slug={tag} />)}
                 </div>
             </main>
             <footer>

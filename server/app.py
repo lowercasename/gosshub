@@ -620,6 +620,58 @@ def page():
             return jsonify([])
         return jsonify([{ 'body': page.body, 'title': page.title, 'slug': page.slug } for page in query])
 
+# Return all documents and their most recent transformation for a specific tag
+@app.route('/tag', methods=['GET'])
+def tag():
+    if request.args:
+        validate(request.args, 'slug')
+        try:
+            tag = Tag.get(Tag.name == request.args['slug'])
+        except DoesNotExist:
+            raise APIErrorNotFound('No matching tag found.')
+        Author = User.alias()
+        Latest = Transformation.alias()
+        cte = (Latest
+            .select(Latest.document_id, fn.MAX(Latest.date).alias('max_date'))
+            .group_by(Latest.document_id)
+            .cte('latest'))
+        predicate = ((Document.id == cte.c.document_id) &
+                    (Transformation.date == cte.c.max_date))
+        query = (Document
+            .select(Document.uuid, Transformation.id.alias('transformation_id'), Transformation.hash, Transformation.date, Transformation.body, Author.username)
+            .where(TransformationToTagMap.tag_id == tag.id)
+            .join(cte, on=predicate)
+            .join_from(Document, Transformation)
+            .join(TransformationToTagMap)
+            .join(Tag)
+            .join_from(Transformation, Author, JOIN.LEFT_OUTER)
+            .order_by(Transformation.date.desc())
+            .with_cte(cte)
+            .group_by(Document))
+        response = []
+        for document in query.dicts():
+            tags = []
+            tag_mappings = TransformationToTagMap.select().where(TransformationToTagMap.transformation_id == document['transformation_id'])
+            if len(tag_mappings):
+                for mapping in tag_mappings:
+                    tags.append(Tag.get_by_id(mapping.tag_id).name)
+            response_document = {
+                'uuid': document['uuid'],
+                'transformations': [
+                    {
+                        'hash': document['hash'],
+                        'username': document['username'],
+                        'body': document['body'],
+                        'date': document['date'],
+                        'tags': tags
+                    }
+                ]
+            }
+            response.append(response_document)
+        return jsonify(response)
+    else:
+        return APIErrorBadRequest('No tag slug specified.')
+
 # Allow running from the command line
 if __name__ == '__main__':
     create_tables()
