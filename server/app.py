@@ -5,6 +5,7 @@ from flask_cors import CORS
 import jwt
 from peewee import *
 from playhouse.shortcuts import model_to_dict
+from hashlib import sha1
 from passlib.hash import pbkdf2_sha256
 import re
 import datetime
@@ -15,7 +16,6 @@ import shortuuid
 # Create Flask instance
 app = Flask(__name__)
 CORS(app)
-# app.config.from_object(__name__)
 
 # Import config
 app.config.from_file("config.toml", load=toml.load)
@@ -50,10 +50,12 @@ class Tag(BaseModel):
     description = TextField(null=True)
 
 class Transformation(BaseModel):
+    hash = CharField(unique=True)
     date = DateTimeField()
     document = ForeignKeyField(Document, backref='transformations')
     user = ForeignKeyField(User, backref='transformations', null=True)
     body = TextField()
+    comment = TextField(null=True)
 
 class Watch(BaseModel):
     document = ForeignKeyField(Document, backref='watches')
@@ -133,6 +135,12 @@ def slugify(text):
     text = str(escape(text))
     return text
 
+def transformation_hash(date, body):
+    if not date or not body:
+        raise APIErrorBadRequest('Not enough parameters supplied to hash function')
+    h = sha1(str(int(date.timestamp())).encode('utf-8') + body.encode('utf-8'))
+    return h.hexdigest()
+
 @database.func()
 def json_field(field):
     return jsonify(field)
@@ -208,14 +216,10 @@ def after_request(response):
     g.db.close()
     return response
 
-# Views
-# @app.route('/')
-# def homepage():
-#     return 'Hello, world!'
-
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def spa(path):
+    print(path, app.static_folder)
     return app.send_static_file("dist/index.html")
 
 @app.route('/cdn/<path:path>')
@@ -422,13 +426,11 @@ def get_document():
     if request.args:
         validate(request.args, 'uuid')
         query = (Document
-                .select(Document.uuid, Transformation.id, Transformation.date, Transformation.body, User.username)
+                .select(Document.uuid, Transformation.id, Transformation.hash, Transformation.date, Transformation.body, User.username)
                 .where(Document.uuid == request.args['uuid'])
                 .join(Transformation)
                 .join(User, JOIN.LEFT_OUTER)
                 .order_by(Transformation.date.desc()))
-
-        print(query)
         if not len(query):
             raise APIErrorNotFound('No matching document found.')
         transformations = []
@@ -440,6 +442,7 @@ def get_document():
                     tags.append(Tag.get_by_id(mapping.tag_id).name)
             transformations.append({
                 'username': transformation['username'],
+                'hash': transformation['hash'],
                 'date': transformation['date'],
                 'body': transformation['body'],
                 'tags': tags
@@ -458,7 +461,7 @@ def get_document():
     predicate = ((Document.id == cte.c.document_id) &
                 (Transformation.date == cte.c.max_date))
     query = (Document
-            .select(Document.uuid, Transformation.id.alias('transformation_id'), Transformation.date, Transformation.body, Author.username)
+            .select(Document.uuid, Transformation.id.alias('transformation_id'), Transformation.hash, Transformation.date, Transformation.body, Author.username)
             .join(cte, on=predicate)
             .join_from(Document, Transformation)
             .join_from(Transformation, Author, JOIN.LEFT_OUTER)
@@ -475,6 +478,7 @@ def get_document():
             'uuid': document['uuid'],
             'transformations': [
                 {
+                    'hash': document['hash'],
                     'username': document['username'],
                     'body': document['body'],
                     'date': document['date'],
@@ -500,13 +504,14 @@ def document(auth):
             created_date=date,
             uuid = uuid)
         transformation = Transformation.create(
+            hash=transformation_hash(date, data['body']),
             date=date,
             document=document,
             user=auth,
             body=data['body'])
         if 'tags' in data:
             existing_tags = [tag.name for tag in Tag.select()]
-            tags_to_attach = [slugify(tag) for tag in data['tags'] if len(tag) > 1 and len(tag) < 60]
+            tags_to_attach = [slugify(tag) for tag in data['tags'][:3] if len(tag) > 1 and len(tag) < 60]
             new_tags = [tag for tag in tags_to_attach if tag not in existing_tags]
             for tag in new_tags:
                 new_tag = Tag.create(
@@ -527,8 +532,10 @@ def document(auth):
             document = Document.get(Document.uuid == request.args['uuid'])
         except DoesNotExist:
             raise APIErrorNotFound('No matching document found.')
+        date = datetime.datetime.now()
         transformation = Transformation.create(
-            date=datetime.datetime.now(),
+            hash=transformation_hash(date, data['body']),
+            date=date,
             document=document,
             user=auth,
             body=data['body'])
