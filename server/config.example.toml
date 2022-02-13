@@ -2,3 +2,4 @@ DATABASE = 'gosshub.db'
 DEBUG = true
 SECRET_KEY = ""
 MAILGUN_KEY = ""
+STATIC_FOLDER = '/frontend'
