@@ -12,6 +12,7 @@ import Home from './home';
 import User from './User';
 import NewDocument from './NewDocument';
 import SingleDocument from './SingleDocument';
+import Tag from './Tag';
 import Account from './Account';
 import VerifyEmail from './VerifyEmail';
 import Page from './Page';
@@ -67,17 +68,25 @@ const App = () => {
                     </nav>
                 </header>
             
-                <Route path="/"><Home /></Route>
-                <UnauthedRoute path="/login"><Login /></UnauthedRoute>
-                <UnauthedRoute path="/register"><Register /></UnauthedRoute>
-                <ProtectedRoute path="/new"><NewDocument /></ProtectedRoute>
-                <Route path="/document/:uuid">{(params) => <SingleDocument uuid={params.uuid} />}</Route>
-                <Route path="/document/:uuid/hash/:hash">{(params) => <SingleDocument uuid={params.uuid} hash={params.hash} />}</Route>
-                <ProtectedRoute path="/document/:uuid/edit">{(params) => <SingleDocument uuid={params.uuid} edit={true} />}</ProtectedRoute>
-                <ProtectedRoute path="/account"><Account /></ProtectedRoute>
-                <UnauthedRoute path="/verify-email"><VerifyEmail /></UnauthedRoute>
-                <Route path="/about"><Page slug="about" /></Route>
-                <ProtectedRoute path="/admin" admin={true}><AdminPanel /></ProtectedRoute>
+                <main id="app__main">
+                    <Route path="/"><Home /></Route>
+                    <UnauthedRoute path="/login"><Login /></UnauthedRoute>
+                    <UnauthedRoute path="/register"><Register /></UnauthedRoute>
+                    <ProtectedRoute path="/new"><NewDocument /></ProtectedRoute>
+                    <Route path="/document/:uuid">{(params) => <SingleDocument uuid={params.uuid} />}</Route>
+                    <Route path="/document/:uuid/hash/:hash">{(params) => <SingleDocument uuid={params.uuid} hash={params.hash} />}</Route>
+                    <ProtectedRoute path="/document/:uuid/edit">{(params) => <SingleDocument uuid={params.uuid} edit={true} />}</ProtectedRoute>
+                    <ProtectedRoute path="/user/:username">{(params) => <User username={params.username} />}</ProtectedRoute>
+                    <Route path="/tag/:slug">{(params) => <Tag slug={params.slug} />}</Route>
+                    <ProtectedRoute path="/account"><Account /></ProtectedRoute>
+                    <UnauthedRoute path="/verify-email"><VerifyEmail /></UnauthedRoute>
+                    <Route path="/about"><Page slug="about" /></Route>
+                    <ProtectedRoute path="/admin" admin={true}><AdminPanel /></ProtectedRoute>
+                </main>
+
+                <aside id="app__sidebar">
+                    <h2>Recent tags</h2>
+                </aside>
             </div>
         )
     }
