@@ -1,3 +1,4 @@
+from waitress import serve
 from functools import wraps
 from secrets import token_urlsafe
 from flask import Flask, g, request, jsonify, escape, send_from_directory
@@ -32,7 +33,7 @@ class BaseModel(Model):
 class User(BaseModel):
     username = CharField(unique=True)
     password = CharField()
-    email = CharField()
+    email = CharField(unique=True)
     join_date = DateTimeField()
     is_admin = BooleanField()
     is_verified = BooleanField()
@@ -45,7 +46,7 @@ class Document(BaseModel):
 
 class Tag(BaseModel):
     created_date = DateTimeField()
-    creator = ForeignKeyField(User, backref='tags')
+    creator = ForeignKeyField(User, backref='tags', null=True)
     name = CharField(unique=True)
     description = TextField(null=True)
 
@@ -78,10 +79,17 @@ class Page(BaseModel):
     title = TextField()
     body = TextField()
 
+class Comment(BaseModel):
+    date = DateTimeField()
+    body = CharField()
+    document = ForeignKeyField(Document, backref='comments')
+    user = ForeignKeyField(User, backref='comments', null=True)
+    parent = ForeignKeyField('self', backref='replies', null=True)
+
 # simple utility function to create tables
 def create_tables():
     with database:
-        database.create_tables([User, Document, Tag, Transformation, Watch, TransformationToTagMap, Log, Page])
+        database.create_tables([User, Document, Tag, Transformation, Watch, TransformationToTagMap, Log, Page, Comment])
 
 # Success handler
 def success(message="Success", status=200):
@@ -161,6 +169,10 @@ def validate(dictionary, field, minlength=False, maxlength=False, match=False, r
     if field not in dictionary or not dictionary[field]:
         raise APIErrorBadRequest(f'{pretty_field(field)} value missing.')
     if (minlength and len(dictionary[field]) < minlength) or (maxlength and len(dictionary[field]) > maxlength):
+        if (minlength and not maxlength):
+            raise APIErrorBadRequest(f'{pretty_field(field)} value must be at least {str(minlength)} characters long.')
+        if maxlength and not minlength:  
+            raise APIErrorBadRequest(f'{pretty_field(field)} value must be at most {str(maxlength)} characters long.')
         raise APIErrorBadRequest(f'{pretty_field(field)} value must be between {str(minlength)} and {str(maxlength)} characters long.')
     if match and dictionary[field] != dictionary[match]:
         raise APIErrorBadRequest(f'{pretty_field(field)} does not match {pretty_field(match, nocaps=True)}.')
@@ -219,12 +231,10 @@ def after_request(response):
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def spa(path):
-    print(path, app.static_folder)
     return app.send_static_file("dist/index.html")
 
 @app.route('/cdn/<path:path>')
 def send_file(path):
-    print(app.static_folder)
     return send_from_directory(app.static_folder + '/dist', path)
 
 @app.route('/log')
@@ -271,8 +281,9 @@ def create_user():
                     "GossHub")
             log(f"User {user.username} created.", initiator=user, visibility='public')
             return success('User created.')
-    except IntegrityError:
-        raise APIErrorConflict('This username is taken.') 
+    except IntegrityError as e:
+        unique_field = 'email address' if 'email' in  str(e) else 'username'
+        raise APIErrorConflict(f'This {unique_field} is taken.') 
 
 @app.route('/user', methods=['GET'])
 @token_required
@@ -319,7 +330,11 @@ def modify_user(auth):
                 log(f"User {target_user.username} changed their username to {data['username']}.", initiator=auth, visibility='public')
             for field, new_value in data.items():
                 if field == 'email':
+                    # Validate the email
                     validate(data, 'email', regex="[^@]+@[^@]+\.[^@]+")
+                    existing_user = User.select().where(User.email == data['email'])
+                    if len(existing_user):
+                        raise APIErrorBadRequest('An account with this email already exists.')
                     # Set and send verification token first
                     token_username = data['username'] if 'username' in data else target_user.username
                     target_user.is_verified = False
@@ -351,11 +366,19 @@ def modify_user(auth):
                 raise APIErrorNotFound('No user found with this ID.')
         else:
             target_user = auth
-        # Free up this user's transformations and logs
+        # Free up this user's transformations, comments, tags and logs
         for transformation in target_user.transformations:
             transformation.user = None
             transformation.save()
-        # TODO: Free up logs here, too
+        for comment in target_user.comments:
+            comment.user = None
+            comment.save()
+        for tag in target_user.tags:
+            tag.creator = None
+            tag.save()
+        for user_log in Log.select().where(Log.affected_user == target_user):
+            user_log.affected_user = None
+            user_log.save()
         target_user.delete_instance()
         log(f"User {target_user.username} deleted.", initiator=auth, visibility='public')
         return success('User deleted.')
@@ -400,11 +423,11 @@ def verify_email():
 @app.route('/reset-token', methods=['POST'])
 def reset_token():
     data = sanitize(request.json)
-    validate(data, 'email')
+    validate(data, 'email', regex="[^@]+@[^@]+\.[^@]+")
     try:
         user = User.get((User.email == data['email']) & (User.is_verified == False))
     except DoesNotExist: 
-        raise APIErrorNotFound('No matching user found.')
+        return success('Token reset.')
     user.verification_token=jwt.encode({ 'username': user.username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1) }, app.config['SECRET_KEY'], algorithm="HS256")
     user.save()
     # Send email with verification token
@@ -420,19 +443,84 @@ def reset_token():
         "GossHub")
     return success('Token reset.')
 
+@app.route('/reset-password', methods=['POST'])
+def reset_password():
+    data = sanitize(request.json)
+    validate(data, 'email')
+    try:
+        user = User.get(User.email == data['email'])
+    except DoesNotExist: 
+        return success('Token reset.')
+    user.verification_token=jwt.encode({ 'username': user.username, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1) }, app.config['SECRET_KEY'], algorithm="HS256")
+    user.save()
+    # Send email with verification token
+    send_email(
+        to=user.email,
+        subject='Reset your password on GossHub',
+        body="Hi!\n\n" +
+        "Someone has requested a password reset for your account on GossHub. If this was you, follow this link to choose a new password:\n" +
+        "https://gosshub.com/new-password?token=" + user.verification_token + "\n\n" +
+        "If you didn't ask for a password reset, you can delete and ignore this email.\n\n" +
+        "This link will expire in 1 hour. If it doesn't work, please request a new verification link here:\n\n" +
+        "https://gosshub.com/reset-password\n\n" +
+        "See you soon,\n\n" +
+        "GossHub")
+    return success('Token reset.')
+
+@app.route('/new-password', methods=['POST'])
+def new_password():
+    data = sanitize(request.json)
+    validate(data, 'password', minlength=6, match='repeat_password')
+    validate(data, 'repeat_password')
+    validate(data, 'verification_token')
+    # Generate salt and hash the password
+    hash = pbkdf2_sha256.hash(data['password'])
+    try:
+        user = User.get((User.verification_token == data['verification_token']))
+    except DoesNotExist: 
+        raise APIErrorNotFound('No user found with this verification token.')
+    try:
+        token_data = jwt.decode(user.verification_token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    except:
+        raise APIErrorBadRequest('This verification token is invalid.')
+    user.password = hash
+    user.verification_token = ""
+    user.save()
+    # Send confirmation email
+    send_email(
+        to=user.email,
+        subject='Password changed on GossHub',
+        body="Hi!\n\n" +
+        "Your password has just been changed on GossHub.\n\n" +
+        "If you did not do this, get in touch with us right away!\n\n" +
+        "Best,\n\n" +
+        "GossHub")
+    log(f"User {user.username} changed their password.", initiator=user)
+    return success('Password updated.')
+
 @app.route('/document', methods=['GET'])
 def get_document():
-    # We want a single document, and all its edit history
-    if request.args:
+    # We want a single document, and all its edit history, watches, and comments.
+    if request.args and 'uuid' in request.args:
         validate(request.args, 'uuid')
         query = (Document
-                .select(Document.uuid, Transformation.id, Transformation.hash, Transformation.date, Transformation.body, User.username)
+                .select(Document.id.alias('document_id'), Document.uuid, Transformation.id, Transformation.hash, Transformation.date, Transformation.body, User.username)
                 .where(Document.uuid == request.args['uuid'])
                 .join(Transformation)
                 .join(User, JOIN.LEFT_OUTER)
+                .group_by(Transformation)
                 .order_by(Transformation.date.desc()))
         if not len(query):
             raise APIErrorNotFound('No matching document found.')
+        comments_query = (Comment
+                .select(Comment.id, Comment.date, Comment.body, Comment.parent_id.alias('parent_id'), User.username)
+                .where(Comment.document == query[0].document_id)
+                .join(User, JOIN.LEFT_OUTER)
+                .order_by(Comment.id.asc()))
+        watches_query = (Watch
+                .select(User.username)
+                .where(Watch.document == query[0].document_id)
+                .join(User, JOIN.LEFT_OUTER))
         transformations = []
         for transformation in query.dicts():
             tags = []
@@ -449,7 +537,9 @@ def get_document():
             })
         return jsonify({
             "uuid": query[0].uuid,
-            "transformations": transformations
+            "comments": [comment for comment in comments_query.dicts()],
+            "watches": [watch.user.username for watch in watches_query],
+            "transformations": transformations,
         })
     # We want all the documents, but just the most recent transformation for each
     Author = User.alias()
@@ -462,11 +552,13 @@ def get_document():
                 (Transformation.date == cte.c.max_date))
     query = (Document
             .select(Document.uuid, Transformation.id.alias('transformation_id'), Transformation.hash, Transformation.date, Transformation.body, Author.username)
+            .where(Transformation.body.contains(request.args['query']) if request.args and 'query' in request.args else None)
             .join(cte, on=predicate)
             .join_from(Document, Transformation)
             .join_from(Transformation, Author, JOIN.LEFT_OUTER)
             .order_by(Transformation.date.desc())
-            .with_cte(cte))
+            .with_cte(cte)
+            .paginate(int(request.args['page']) if request.args and 'page' in request.args else 1, 20))
     response = []
     for document in query.dicts():
         tags = []
@@ -553,6 +645,17 @@ def document(auth):
                 tag_field = Tag.get(Tag.name == tag)
                 map = TransformationToTagMap.create(transformation=transformation, tag=tag_field)
         log(f"{auth.username} edited a document.", initiator=auth, affected_document=document, visibility='public')
+        # Update watchers
+        watchers = Watch.select().where((Watch.document == document) & (Watch.user != auth))
+        for row in watchers:
+            send_email(
+                to=row.user.email,
+                subject='Document updated on GossHub',
+                body="Hi!\n\n" +
+                f"A document you're watching has been updated by {auth.username}. Follow this link to see the update:\n" +
+                f"https://gosshub.com/document/{document.uuid}/hash/{transformation.hash}\n\n" +
+                "Best,\n\n" +
+                "GossHub")
         return success('Document edited.')
     elif request.method == 'DELETE':
         return success('Endpoint not enabled.')
@@ -620,10 +723,10 @@ def page():
             return jsonify([])
         return jsonify([{ 'body': page.body, 'title': page.title, 'slug': page.slug } for page in query])
 
-# Return all documents and their most recent transformation for a specific tag
 @app.route('/tag', methods=['GET'])
 def tag():
     if request.args:
+        # Return all documents and their most recent transformation for a specific tag
         validate(request.args, 'slug')
         try:
             tag = Tag.get(Tag.name == request.args['slug'])
@@ -670,9 +773,100 @@ def tag():
             response.append(response_document)
         return jsonify(response)
     else:
-        return APIErrorBadRequest('No tag slug specified.')
+        # Return all tags and the number of documents per tag.
+        Latest = Transformation.alias()
+        cte = (Latest
+            .select(Latest.document_id, fn.MAX(Latest.date).alias('max_date'))
+            .group_by(Latest.document_id)
+            .cte('latest'))
+        predicate = ((Document.id == cte.c.document_id) &
+                    (Transformation.date == cte.c.max_date))
+        query = (Document
+            .select(Tag.name, fn.Count(Document.uuid).alias('count'))
+            .join(cte, on=predicate)
+            .join(Transformation)
+            .join(TransformationToTagMap)
+            .join(Tag)
+            .with_cte(cte)
+            .order_by(SQL('count').desc())
+            .group_by(Tag).dicts())
+        return jsonify([ row for row in query ])
+
+@app.route('/comment', methods=['POST'])
+@token_required
+def create_comment(auth):
+    data = sanitize(request.json)
+    validate(data, 'body')
+    validate(data, 'uuid')
+    parent = None
+    # Verify the document exists.
+    try:
+        document = Document.get(Document.uuid == data['uuid'])
+    except DoesNotExist:
+        raise APIErrorNotFound('No matching document found.')
+    if 'parent_id' in data:
+        # This is a child comment - verify the parent exists
+        # and belongs to this document.
+        parent_query = (Comment
+            .select()
+            .where((Comment.id == data['parent_id']) & (Comment.document.uuid == data['uuid']))
+            .join(Document))
+        if not len(parent_query):
+            raise APIErrorBadRequest('No matching parent comment found.')
+        parent = parent_query[0]
+    comment = Comment.create(
+        date=datetime.datetime.now(),
+        body=data['body'],
+        user=auth,
+        document=document,
+        parent=parent)
+    # Update watchers
+    watchers = Watch.select().where((Watch.document == document) & (Watch.user != auth))
+    for row in watchers:
+        send_email(
+            to=row.user.email,
+            subject='New comment on GossHub',
+            body="Hi!\n\n" +
+            f"The user {auth.username} has commented on a document you're following on GossHub. Follow this link to see the update:\n" +
+            f"https://gosshub.com/document/{document.uuid}\n\n" +
+            "Best,\n\n" +
+            "GossHub")
+    return success('Comment created.')
+
+@app.route('/watch', methods=['POST', 'DELETE'])
+@token_required
+def watch(auth):
+    if request.method == 'POST':
+        data = sanitize(request.json)
+        validate(data, 'uuid')
+        try:
+            document = Document.get(Document.uuid == data['uuid'])
+        except DoesNotExist:
+            raise APIErrorNotFound('No matching document found.')
+        try:
+            existing_watch = Watch.get((Watch.user == auth) & (Watch.document == document))
+            return success('Watch already exists.')
+        except DoesNotExist:
+            watch = Watch.create(
+                user=auth,
+                document=document)
+            return success('Watch created.')
+    elif request.method == 'DELETE':
+        if request.args and 'uuid' in request.args:
+            try:
+                document = Document.get(Document.uuid == request.args['uuid'])
+            except DoesNotExist:
+                raise APIErrorNotFound('No matching document found.')
+            try:
+                existing_watch = Watch.get((Watch.user == auth) & (Watch.document == document))
+            except DoesNotExist:
+                raise APIErrorNotFound('No watch found for this document.')
+            existing_watch.delete_instance()
+            return success('Watch deleted.')
+        else:
+            raise APIErrorBadRequest('No UUID specified.')
 
 # Allow running from the command line
 if __name__ == '__main__':
     create_tables()
-    app.run()
+    serve(app, host='0.0.0.0', port=5000)
