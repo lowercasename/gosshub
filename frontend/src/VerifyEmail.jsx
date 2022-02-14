@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';      
+import { useLocation } from 'wouter';
 import Message from './components/message';
 import { apiCall } from './util';
 
 const VerifyEmail = () => {
+    const [location, setLocation] = useLocation();
     const [message, setMessage] = useState(false);
     useEffect(() => {
-        console.log(window.location.search);
         const params = new URLSearchParams(window.location.search);
         const token = params.get("token");
         if (token) {

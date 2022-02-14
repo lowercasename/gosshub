@@ -25,13 +25,17 @@ export const apiCall = async (route, authorize = false, method = 'get', payload 
             data: dataRoutes.includes(method) ? payload : undefined,
             headers: authorize ? { 'Authorization': `Bearer ${jwt}` } : undefined,
         });
-        if (authorize) store.dispatch({ type: 'auth/login' });
+        if (authorize && response.status === 200) {
+            store.dispatch({ type: 'auth/login' });
+        }
         return response.data;
     } catch(error) {
         if (error.status === 401) {
-            console.log('Logging out util'); 
             store.dispatch({ type: 'auth/logout' })
         };
         throw error.response;
     }
 };
+
+
+export const formatDate = (date) => new Date(date).toLocaleDateString();

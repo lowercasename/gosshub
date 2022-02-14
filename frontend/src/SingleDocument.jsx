@@ -9,7 +9,7 @@ const SingleDocument = ({ uuid, hash, edit }) => {
     const [error, setError] = useState('');
     
     useEffect(() => {
-        apiCall(`/document?uuid=${uuid}`, true)
+        apiCall(`/document?uuid=${uuid}`)
             .then(data => {
                 if (hash && !data.transformations.find(({ hash: transformationHash }) => transformationHash === hash )) {
                     setError('There is no document version matching this hash.');

@@ -19,19 +19,6 @@ const Register = () => {
         apiCall('/user', false, 'post', { username, password, repeat_password: repeatPassword, email })
             .then(response => setShowForm(false))
             .catch(error => setErrorText(error.data.message));
-        // axios.post('http://127.0.0.1:5000/login', {
-        //     username,
-        //     password
-        // })
-        // .then(response => {
-        //     if (response.data.token) {
-        //         dispatch({ type: 'jwt/set', payload: response.data.token });
-        //         setLocation("/"); 
-        //     }
-        // })
-        // .catch(error => {
-        //     setErrorText(error.response.data.message);
-        // })
     }
     return (showForm
         ? <>

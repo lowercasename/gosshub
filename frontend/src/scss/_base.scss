@@ -22,15 +22,14 @@ a:hover {
 
 #app {
     margin: 0 auto;
+    padding: 1rem;
     display: grid;
     grid-template-rows: min-content 1fr;
     grid-template-columns: minmax(auto, 1fr);
-    max-width: 960px;
-    gap: 1rem;
-    width: 100%;
+    max-width: 800px;
     @include media.gt-md {
         grid-template-columns: minmax(auto, 1fr) 200px;
-        max-width: 1176px;
+        max-width: 1000px;
     }
 }
 
@@ -41,6 +40,7 @@ a:hover {
     border-bottom: 2px solid variables.$blue;
     justify-content: space-between;
     align-items: center;
+    margin-bottom: 1rem;
     
     h1 {
         margin: 0;
@@ -73,7 +73,16 @@ a:hover {
 #app__sidebar {
     display: none;
     @include media.gt-md {
+        margin-left: 2rem;
         display: block;
+    }
+    h2 {
+        font-size: 1rem;
+        font-weight: 700;
+        margin: 0 0 .5rem 0;
+        &:not(:first-child) {
+            margin: 1rem 0 .5rem 0;
+        }
     }
 }
 
@@ -101,6 +110,16 @@ a:hover {
     gap: 1rem;
     align-items: flex-start;
     flex-direction: column;
+}
+
+.flex-centered {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+p.muted {
+    color: variables.grey(40);
 }
 
 .account__field {
@@ -153,4 +172,11 @@ table {
         align-items: center;
         justify-content: center;
     }
+}
+
+.recent-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem;
+    margin-top: .5rem;
 }

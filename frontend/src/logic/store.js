@@ -4,6 +4,7 @@ const initialState = {
     loggedIn: false,
     user: {},
     jwt: localStorage.getItem('jwt') || false,
+    documents: [],
 }
 
 const rootReducer = (state = initialState, action) => {
@@ -15,9 +16,13 @@ const rootReducer = (state = initialState, action) => {
             return { ...state, loggedIn: true }
         case 'auth/logout':
             localStorage.removeItem('jwt');
-            return { ...state, loggedIn: false }
+            return { ...state, loggedIn: false, jwt: false, user: false }
         case 'user/set':
             return { ...state, user: action.payload }
+        case 'documents/set':
+            return { ...state, documents: action.payload }
+        case 'documents/append':
+            return { ...state, documents: [ ...state.documents, ...action.payload ] }
         default:
             return state;
     }

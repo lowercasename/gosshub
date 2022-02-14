@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useSelector, useDispatch } from 'react-redux';
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import axios from 'axios';
 import Message from './components/message';
 import { parseJwt } from './util';
@@ -37,6 +37,7 @@ const Login = () => {
                 <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} />
                 <input type="submit" className="gh-button" value="Log in" />
             </form>
+            <Link href="/reset-password">Forgot password?</Link>
         </>
     );
 }

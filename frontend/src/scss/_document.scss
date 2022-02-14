@@ -75,13 +75,75 @@
             background: variables.$blue;
         }
     }
+
+    &__options {
+        padding: 0.5rem;
+        border: 1px solid variables.grey(75);
+        box-shadow: 3px 3px 0 variables.grey(95);
+    }
+
+    &__comments {
+        > .document__comment {
+            margin-left: 0;
+            border: 1px solid variables.grey(75);
+            box-shadow: 3px 3px 0 variables.grey(95);
+            margin-bottom: 1rem;
+        }
+    }
+    &__comment {
+        font-size: 0.9rem;
+        margin-left: 1rem;
+        padding: 0.75rem 0.5rem;
+        &__meta {
+            color: variables.grey(40);
+            a {
+                font-weight: 700;
+            }
+            margin-bottom: .5rem;
+        }
+        &__controls {
+            margin-top: .5rem;
+            font-size: .8rem;
+            button {
+            }
+        }
+        &__editor {
+            margin: .5rem 0 .5rem 1.5rem;
+            &--root {
+                margin: 0 0 1rem 0;
+                textarea {
+                    padding: .5em !important;
+                }
+            }
+            textarea {
+                width: 100%;
+                border: 1px solid variables.grey(75);
+                padding: .25rem;
+                margin-bottom: .5rem;
+            }
+        }
+        &__button {
+            background: white;
+            color: variables.grey(40);
+            border: none;
+            padding: 0;
+            cursor: pointer;
+            transition: .15s;
+            &:hover {
+                color: variables.$blue;
+            }
+        }
+        > *:last-child {
+            padding-bottom: 0;
+        }
+    }
 }
 
 .document-editor {
     border: 1px solid variables.grey(75);
     box-shadow: 3px 3px 0 variables.grey(95);
     padding: 1rem;
-    margin: 2rem 0;
+    margin: 0 0 2rem 0;
     textarea {
         width: 100%;
         min-height: 500px;
@@ -103,6 +165,9 @@ a.gh-tag {
     background: variables.$blue;
     color: variables.grey(90);
     padding: .25rem .5rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     &:hover {
         background: lighten(variables.$blue, 10%);
     }

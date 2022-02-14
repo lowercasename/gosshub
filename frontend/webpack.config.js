@@ -7,7 +7,7 @@ module.exports = {
     mode: 'development',
     output: {
         path: path.resolve(__dirname) + '/dist',
-        filename: 'bundle.js'
+        filename: 'bundle.js',
     },
     module: {
         rules: [
@@ -29,10 +29,7 @@ module.exports = {
             {
                 test: /\.s[ac]ss$/i,
                 use: [
-                    // fallback to style-loader in development
-                    process.env.NODE_ENV !== "production"
-                        ? "style-loader"
-                        : MiniCssExtractPlugin.loader,
+                    MiniCssExtractPlugin.loader,
                     "css-loader",
                     "sass-loader",
                 ],
