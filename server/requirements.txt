@@ -1,0 +1,9 @@
+Flask==2.0.2
+Flask_Cors==3.0.10
+passlib==1.7.4
+peewee==3.14.8
+PyJWT==2.3.0
+requests==2.25.1
+shortuuid==1.0.8
+toml==0.10.2
+waitress==2.0.0
